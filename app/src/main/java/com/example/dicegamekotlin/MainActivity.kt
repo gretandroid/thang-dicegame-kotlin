@@ -2,6 +2,7 @@ package com.example.dicegamekotlin
 
 import android.os.Bundle
 import android.os.Handler
+import android.os.Looper
 import android.os.Message
 import android.util.Log
 import android.view.View
@@ -20,15 +21,25 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private val diceImages: MutableList<ImageView> = ArrayList()
     private lateinit var diceResIds: IntArray
-    var rotateHandler: Handler? = null
-    private var rotateButton: Button? = null
+    var rotateHandler = object : Handler(Looper.getMainLooper()) {
+        override fun handleMessage(msg: Message) {
+            if (msg.what == ROTATE_START) {
+                refreshRotateButtonToRotating()
+            }
+            if (msg.what == ROTATE_IN_PROGRESS) {
+                refreshDice(msg.obj as ImageView, msg.arg1)
+            }
+            if (msg.what == ROTATE_END) {
+                refreshRotateButtonToRotate()
+            }
+        }
+    }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
         initDiceImages()
-        rotateButton = binding.rotateButton
 
         // init models dices
         diceResIds = intArrayOf(
@@ -39,21 +50,6 @@ class MainActivity : AppCompatActivity() {
             R.drawable.de5,
             R.drawable.de6
         )
-
-        // init a Handler
-        rotateHandler = object : Handler() {
-            override fun handleMessage(msg: Message) {
-                if (msg.what == ROTATE_START) {
-                    refreshRotateButtonToRotating()
-                }
-                if (msg.what == ROTATE_IN_PROGRESS) {
-                    refreshDice(msg.obj as ImageView, msg.arg1)
-                }
-                if (msg.what == ROTATE_END) {
-                    refreshRotateButtonToRotate()
-                }
-            }
-        }
 
         // Restore state
         if (savedInstanceState != null) {
@@ -83,14 +79,12 @@ class MainActivity : AppCompatActivity() {
         super.onSaveInstanceState(outState)
         diceImages.forEach(Consumer { dice: ImageView ->
             val resId = dice.tag as Int
-            if (resId != null) {
-                val key = buildDiceStateKey(dice)
-                outState.putInt(key, resId)
-                Log.d(
-                    "MainActivity",
-                    "onSaveInstanceState[key=$key, value=$resId]"
-                )
-            }
+            val key = buildDiceStateKey(dice)
+            outState.putInt(key, resId)
+            Log.d(
+                "MainActivity",
+                "onSaveInstanceState[key=$key, value=$resId]"
+            )
         })
     }
 
@@ -107,34 +101,36 @@ class MainActivity : AppCompatActivity() {
         val childThread: Thread = object : Thread() {
             override fun run() {
                 // BEGIN
-                val beginMsg = Message()
-                beginMsg.what = ROTATE_START
-                rotateHandler!!.sendMessage(beginMsg)
+                Message().also {
+                    it.what = ROTATE_START
+                    rotateHandler.sendMessage(it)
+                }
 
                 // ROTATING
                 val numberDice = diceImages.size
-                val executorService = Executors.newFixedThreadPool(numberDice)
-                for (dice in diceImages) {
-                    executorService.submit { doRotate(dice) }
-                }
-                executorService.shutdown()
-                try {
-                    executorService.awaitTermination(Long.MAX_VALUE, TimeUnit.NANOSECONDS)
-                } catch (e: InterruptedException) {
-                    e.printStackTrace()
+                Executors.newFixedThreadPool(numberDice).also {
+                    for (dice in diceImages) {
+                        it.submit { doRotate(dice) }
+                    }
+                    it.shutdown()
+                    try {
+                        it.awaitTermination(Long.MAX_VALUE, TimeUnit.NANOSECONDS)
+                    } catch (e: InterruptedException) {
+                        e.printStackTrace()
+                    }
                 }
 
                 // END
-                val endMsg = Message()
-                endMsg.what = ROTATE_END
-                rotateHandler!!.sendMessage(endMsg)
+                Message().also {
+                    it.what = ROTATE_END
+                    rotateHandler.sendMessage(it)
+                }
             }
         }
         childThread.start()
     }
 
     private fun doRotate(dice: ImageView) {
-        val randomRotateCycle = Random(System.currentTimeMillis())
         val numberCycle = ThreadLocalRandom.current().nextInt(MAX_CYCLE - MIN_CYCLE + 1) + MIN_CYCLE
         val random = Random(System.currentTimeMillis())
         var i = 1
@@ -145,23 +141,24 @@ class MainActivity : AppCompatActivity() {
             } catch (e: InterruptedException) {
                 e.printStackTrace()
             }
-            val msg = Message()
-            msg.what = ROTATE_IN_PROGRESS
-            msg.obj = dice
-            msg.arg1 = resultResId
-            rotateHandler!!.sendMessage(msg)
+            Message().also {
+                it.what = ROTATE_IN_PROGRESS
+                it.obj = dice
+                it.arg1 = resultResId
+                rotateHandler.sendMessage(it)
+            }
             i++
         }
     }
 
     private fun refreshRotateButtonToRotating() {
-        rotateButton!!.setText(R.string.rotating)
-        rotateButton!!.isEnabled = false
+        binding.rotateButton.setText(R.string.rotating)
+        binding.rotateButton.isEnabled = false
     }
 
     private fun refreshRotateButtonToRotate() {
-        rotateButton!!.setText(R.string.rotate)
-        rotateButton!!.isEnabled = true
+        binding.rotateButton.setText(R.string.rotate)
+        binding.rotateButton.isEnabled = true
     }
 
     private fun refreshDice(dice: ImageView, resultResId: Int) {
